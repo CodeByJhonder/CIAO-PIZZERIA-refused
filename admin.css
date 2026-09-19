@@ -192,6 +192,10 @@ input{font-family:inherit;}
 
 .orders-empty, .orders-loading{text-align:center; padding:40px 20px; color:var(--gris); font-size:0.9rem;}
 
+.subsection-title{
+  font-size:1.1rem; color:var(--rojo-oscuro); margin:30px 0 12px;
+}
+
 /* ================= MODAL DE DETALLE ================= */
 .detail-overlay{
   position:fixed; inset:0; background:rgba(42,32,27,0.55); z-index:100;

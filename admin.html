@@ -59,6 +59,10 @@
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 7 12 3 4 7v10l8 4 8-4V7Z"/><path d="M12 12 20 7"/><path d="M12 12v9"/><path d="M12 12 4 7"/></svg>
         Inventario
       </a>
+      <a class="sidebar-link" href="#" data-view="caja">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="6" width="20" height="13" rx="2"/><path d="M2 10h20"/><path d="M6 15h4"/></svg>
+        Caja
+      </a>
     </nav>
     <div class="sidebar-footer">
       <button class="logout-btn" id="logoutBtn" type="button">Cerrar sesión</button>
@@ -197,6 +201,63 @@
 
     </div>
 
+    <!-- ==================== VISTA: CAJA ==================== -->
+    <div class="view hidden" id="viewCaja">
+
+      <header class="topbar">
+        <div class="topbar-title">
+          <h1>Caja</h1>
+        </div>
+        <div class="topbar-actions">
+          <button class="btn-outline" id="newGastoBtn" type="button">+ Registrar gasto</button>
+          <button class="btn-outline" id="cerrarCajaBtn" type="button">Cerrar caja del día</button>
+        </div>
+      </header>
+
+      <section class="kpi-grid kpi-grid-3">
+        <div class="kpi-card kpi-ventas">
+          <span class="kpi-label">Ingresos de hoy</span>
+          <span class="kpi-value" id="kpiIngresosHoy">$0</span>
+        </div>
+        <div class="kpi-card kpi-pendiente">
+          <span class="kpi-label">Egresos de hoy</span>
+          <span class="kpi-value" id="kpiEgresosHoy">$0</span>
+        </div>
+        <div class="kpi-card">
+          <span class="kpi-label">Efectivo estimado</span>
+          <span class="kpi-value" id="kpiEfectivoEstimado">$0</span>
+        </div>
+      </section>
+      <p class="detail-section-label" style="margin:-10px 0 20px;">
+        "Efectivo estimado" = ingresos − egresos de hoy. Es una referencia; no distingue entre pago móvil, dólares u otros medios.
+      </p>
+
+      <!-- ---------- GASTOS DE HOY ---------- -->
+      <h2 class="subsection-title">Gastos de hoy</h2>
+      <section class="orders-wrap">
+        <table class="orders-table">
+          <thead>
+            <tr><th>Hora</th><th>Concepto</th><th>Categoría</th><th>Monto</th><th></th></tr>
+          </thead>
+          <tbody id="gastosBody"></tbody>
+        </table>
+        <p class="orders-empty hidden" id="gastosEmpty">Aún no se ha registrado ningún gasto hoy.</p>
+      </section>
+
+      <!-- ---------- HISTORIAL DE CIERRES ---------- -->
+      <h2 class="subsection-title">Historial de cierres</h2>
+      <section class="orders-wrap">
+        <table class="orders-table">
+          <thead>
+            <tr><th>Fecha</th><th>Ingresos</th><th>Egresos</th><th>Efectivo esperado</th><th>Efectivo contado</th><th>Diferencia</th></tr>
+          </thead>
+          <tbody id="cierresBody"></tbody>
+        </table>
+        <p class="orders-empty hidden" id="cierresEmpty">Todavía no hay cierres de caja registrados.</p>
+      </section>
+
+    </div>
+
   </main>
 </div>
 
@@ -266,6 +327,63 @@
         <input id="movMotivo" placeholder="Ej: Compra al mayorista, merma, etc." type="text"/>
       </div>
       <button class="login-btn" id="movementSubmitBtn" type="submit">Registrar</button>
+    </form>
+  </div>
+</div>
+
+<!-- ==================== MODAL: NUEVO GASTO ==================== -->
+<div class="detail-overlay" id="gastoOverlay">
+  <div class="detail-card">
+    <div class="detail-header">
+      <h2>Registrar gasto</h2>
+      <button aria-label="Cerrar" class="detail-close" id="gastoClose" type="button">✕</button>
+    </div>
+    <form class="detail-body" id="gastoForm">
+      <div class="field">
+        <label for="gastoConcepto">Concepto</label>
+        <input id="gastoConcepto" placeholder="Ej: Compra de queso, pago de gas…" required type="text"/>
+      </div>
+      <div class="field">
+        <label for="gastoCategoria">Categoría</label>
+        <select id="gastoCategoria">
+          <option value="Insumos">Compra de insumos</option>
+          <option value="Operativo">Gasto operativo</option>
+          <option value="Servicios">Servicios (luz, gas, etc.)</option>
+          <option value="Otro">Otro</option>
+        </select>
+      </div>
+      <div class="field">
+        <label for="gastoMonto">Monto ($)</label>
+        <input id="gastoMonto" min="0.01" required step="any" type="number"/>
+      </div>
+      <button class="login-btn" type="submit">Guardar gasto</button>
+    </form>
+  </div>
+</div>
+
+<!-- ==================== MODAL: CERRAR CAJA ==================== -->
+<div class="detail-overlay" id="cierreOverlay">
+  <div class="detail-card">
+    <div class="detail-header">
+      <h2>Cerrar caja del día</h2>
+      <button aria-label="Cerrar" class="detail-close" id="cierreClose" type="button">✕</button>
+    </div>
+    <form class="detail-body" id="cierreForm">
+      <div class="detail-grid">
+        <div><strong>Ingresos de hoy:</strong> <span id="cierreIngresosTxt">$0</span></div>
+        <div><strong>Egresos de hoy:</strong> <span id="cierreEgresosTxt">$0</span></div>
+        <div style="grid-column:1 / -1;"><strong>Efectivo esperado:</strong> <span id="cierreEsperadoTxt">$0</span></div>
+      </div>
+      <div class="field">
+        <label for="cierreEfectivoContado">Efectivo contado en caja</label>
+        <input id="cierreEfectivoContado" min="0" required step="any" type="number"/>
+      </div>
+      <p class="detail-section-label" id="cierreDiferenciaTxt">Diferencia: $0</p>
+      <div class="field">
+        <label for="cierreNotas">Notas (opcional)</label>
+        <input id="cierreNotas" placeholder="Ej: faltó vuelto, se pagó delivery en efectivo…" type="text"/>
+      </div>
+      <button class="login-btn" type="submit">Confirmar cierre</button>
     </form>
   </div>
 </div>

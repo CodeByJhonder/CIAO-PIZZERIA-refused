@@ -415,11 +415,13 @@ document.getElementById('exportCsvBtn').addEventListener('click', () => {
 });
 
 // ---------------------------------------------------------------
-// NAVEGACIÓN ENTRE VISTAS (Pedidos / Inventario)
+// NAVEGACIÓN ENTRE VISTAS (Pedidos / Inventario / Caja)
 // ---------------------------------------------------------------
 const viewPedidos = document.getElementById('viewPedidos');
 const viewInventario = document.getElementById('viewInventario');
+const viewCaja = document.getElementById('viewCaja');
 let inventarioCargadoUnaVez = false;
+let cajaCargadaUnaVez = false;
 
 document.querySelectorAll('.sidebar-link').forEach(link => {
   link.addEventListener('click', (e) => {
@@ -428,17 +430,21 @@ document.querySelectorAll('.sidebar-link').forEach(link => {
     link.classList.add('active');
 
     const vista = link.dataset.view;
+    viewPedidos.classList.toggle('hidden', vista !== 'pedidos');
+    viewInventario.classList.toggle('hidden', vista !== 'inventario');
+    viewCaja.classList.toggle('hidden', vista !== 'caja');
+
     if (vista === 'inventario') {
-      viewPedidos.classList.add('hidden');
-      viewInventario.classList.remove('hidden');
       if (!inventarioCargadoUnaVez) {
         inventarioCargadoUnaVez = true;
         suscribirseATiempoRealInventario();
       }
       cargarIngredientes();
-    } else {
-      viewInventario.classList.add('hidden');
-      viewPedidos.classList.remove('hidden');
+    } else if (vista === 'caja') {
+      if (!cajaCargadaUnaVez) {
+        cajaCargadaUnaVez = true;
+      }
+      cargarCaja();
     }
   });
 });
@@ -648,6 +654,236 @@ document.getElementById('movementForm').addEventListener('submit', async (e) => 
   movementOverlay.classList.remove('open');
   ingredienteEnMovimiento = null;
   cargarIngredientes();
+});
+
+// ---------------------------------------------------------------
+// CAJA: ESTADO EN MEMORIA
+// ---------------------------------------------------------------
+let gastosCache = [];
+let cierresCache = [];
+
+function hoyISO() {
+  const d = new Date();
+  const tz = d.getTimezoneOffset() * 60000;
+  return new Date(d - tz).toISOString().slice(0, 10);
+}
+
+async function cargarCaja() {
+  await Promise.all([cargarGastosHoy(), cargarCierres()]);
+  renderCaja();
+}
+
+async function cargarGastosHoy() {
+  const { data, error } = await supabaseClient
+    .from('gastos')
+    .select('*')
+    .eq('fecha', hoyISO())
+    .order('creado_en', { ascending: false });
+  if (error) {
+    console.error('Error cargando gastos:', error.message);
+    return;
+  }
+  gastosCache = data || [];
+}
+
+async function cargarCierres() {
+  const { data, error } = await supabaseClient
+    .from('cierres_diarios')
+    .select('*')
+    .order('fecha', { ascending: false })
+    .limit(30);
+  if (error) {
+    console.error('Error cargando cierres:', error.message);
+    return;
+  }
+  cierresCache = data || [];
+}
+
+function ingresosDeHoy() {
+  return pedidosCache
+    .filter(p => !p.es_prueba && esHoy(p.creado_en) && p.estado !== 'Cancelado')
+    .reduce((sum, p) => sum + Number(p.total || 0), 0);
+}
+
+function egresosDeHoy() {
+  return gastosCache.reduce((sum, g) => sum + Number(g.monto || 0), 0);
+}
+
+// ---------------------------------------------------------------
+// CAJA: RENDER
+// ---------------------------------------------------------------
+function renderCaja() {
+  const ingresos = ingresosDeHoy();
+  const egresos = egresosDeHoy();
+  const efectivoEstimado = ingresos - egresos;
+
+  document.getElementById('kpiIngresosHoy').textContent = `$${ingresos.toFixed(2)}`;
+  document.getElementById('kpiEgresosHoy').textContent = `$${egresos.toFixed(2)}`;
+  document.getElementById('kpiEfectivoEstimado').textContent = `$${efectivoEstimado.toFixed(2)}`;
+
+  renderTablaGastos();
+  renderTablaCierres();
+}
+
+function renderTablaGastos() {
+  const tbody = document.getElementById('gastosBody');
+  const emptyEl = document.getElementById('gastosEmpty');
+
+  if (!gastosCache.length) {
+    tbody.innerHTML = '';
+    emptyEl.classList.remove('hidden');
+    return;
+  }
+  emptyEl.classList.add('hidden');
+
+  tbody.innerHTML = gastosCache.map(g => `
+    <tr>
+      <td class="order-hora">${formatearHora(g.creado_en)}</td>
+      <td>${escapeHTML(g.concepto)}</td>
+      <td>${escapeHTML(g.categoria)}</td>
+      <td class="order-total">$${Number(g.monto).toFixed(2)}</td>
+      <td><button class="cart-line-remove" data-gasto-id="${g.id}" type="button" aria-label="Eliminar gasto">✕</button></td>
+    </tr>
+  `).join('');
+}
+
+function renderTablaCierres() {
+  const tbody = document.getElementById('cierresBody');
+  const emptyEl = document.getElementById('cierresEmpty');
+
+  if (!cierresCache.length) {
+    tbody.innerHTML = '';
+    emptyEl.classList.remove('hidden');
+    return;
+  }
+  emptyEl.classList.add('hidden');
+
+  tbody.innerHTML = cierresCache.map(c => {
+    const dif = Number(c.diferencia);
+    const difColor = dif === 0 ? 'var(--verde)' : (dif < 0 ? 'var(--rojo)' : '#8a6414');
+    return `
+      <tr>
+        <td>${new Date(c.fecha + 'T12:00:00').toLocaleDateString('es-VE')}</td>
+        <td>$${Number(c.ingresos).toFixed(2)}</td>
+        <td>$${Number(c.egresos).toFixed(2)}</td>
+        <td>$${Number(c.efectivo_esperado).toFixed(2)}</td>
+        <td>$${Number(c.efectivo_contado).toFixed(2)}</td>
+        <td style="color:${difColor}; font-weight:700;">${dif > 0 ? '+' : ''}$${dif.toFixed(2)}</td>
+      </tr>
+    `;
+  }).join('');
+}
+
+// Eliminar un gasto (por si se registró por error)
+document.getElementById('gastosBody').addEventListener('click', async (e) => {
+  const btn = e.target.closest('[data-gasto-id]');
+  if (!btn) return;
+  if (!confirm('¿Eliminar este gasto?')) return;
+  const { error } = await supabaseClient.from('gastos').delete().eq('id', btn.dataset.gastoId);
+  if (error) {
+    alert('No se pudo eliminar: ' + error.message);
+    return;
+  }
+  await cargarGastosHoy();
+  renderCaja();
+});
+
+// ---------------------------------------------------------------
+// MODAL: NUEVO GASTO
+// ---------------------------------------------------------------
+const gastoOverlay = document.getElementById('gastoOverlay');
+
+document.getElementById('newGastoBtn').addEventListener('click', () => {
+  document.getElementById('gastoForm').reset();
+  gastoOverlay.classList.add('open');
+});
+document.getElementById('gastoClose').addEventListener('click', () => {
+  gastoOverlay.classList.remove('open');
+});
+gastoOverlay.addEventListener('click', (e) => {
+  if (e.target === gastoOverlay) gastoOverlay.classList.remove('open');
+});
+
+document.getElementById('gastoForm').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const nuevo = {
+    concepto: document.getElementById('gastoConcepto').value.trim(),
+    categoria: document.getElementById('gastoCategoria').value,
+    monto: parseFloat(document.getElementById('gastoMonto').value) || 0,
+    fecha: hoyISO(),
+  };
+  const { error } = await supabaseClient.from('gastos').insert(nuevo);
+  if (error) {
+    alert('No se pudo guardar el gasto: ' + error.message);
+    return;
+  }
+  gastoOverlay.classList.remove('open');
+  await cargarGastosHoy();
+  renderCaja();
+});
+
+// ---------------------------------------------------------------
+// MODAL: CERRAR CAJA DEL DÍA
+// ---------------------------------------------------------------
+const cierreOverlay = document.getElementById('cierreOverlay');
+
+document.getElementById('cerrarCajaBtn').addEventListener('click', () => {
+  const ingresos = ingresosDeHoy();
+  const egresos = egresosDeHoy();
+  const esperado = ingresos - egresos;
+
+  document.getElementById('cierreForm').reset();
+  document.getElementById('cierreIngresosTxt').textContent = `$${ingresos.toFixed(2)}`;
+  document.getElementById('cierreEgresosTxt').textContent = `$${egresos.toFixed(2)}`;
+  document.getElementById('cierreEsperadoTxt').textContent = `$${esperado.toFixed(2)}`;
+  document.getElementById('cierreDiferenciaTxt').textContent = `Diferencia: $${(0 - esperado).toFixed(2)}`;
+
+  cierreOverlay.classList.add('open');
+});
+
+document.getElementById('cierreClose').addEventListener('click', () => {
+  cierreOverlay.classList.remove('open');
+});
+cierreOverlay.addEventListener('click', (e) => {
+  if (e.target === cierreOverlay) cierreOverlay.classList.remove('open');
+});
+
+document.getElementById('cierreEfectivoContado').addEventListener('input', (e) => {
+  const esperado = ingresosDeHoy() - egresosDeHoy();
+  const contado = parseFloat(e.target.value) || 0;
+  const diferencia = contado - esperado;
+  document.getElementById('cierreDiferenciaTxt').textContent = `Diferencia: ${diferencia >= 0 ? '+' : ''}$${diferencia.toFixed(2)}`;
+});
+
+document.getElementById('cierreForm').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const ingresos = ingresosDeHoy();
+  const egresos = egresosDeHoy();
+  const esperado = ingresos - egresos;
+  const contado = parseFloat(document.getElementById('cierreEfectivoContado').value) || 0;
+  const notas = document.getElementById('cierreNotas').value.trim() || null;
+
+  const registro = {
+    fecha: hoyISO(),
+    ingresos: ingresos,
+    egresos: egresos,
+    efectivo_esperado: esperado,
+    efectivo_contado: contado,
+    diferencia: contado - esperado,
+    notas: notas,
+  };
+
+  const { error } = await supabaseClient
+    .from('cierres_diarios')
+    .upsert(registro, { onConflict: 'fecha' });
+
+  if (error) {
+    alert('No se pudo registrar el cierre: ' + error.message);
+    return;
+  }
+  cierreOverlay.classList.remove('open');
+  await cargarCierres();
+  renderCaja();
 });
 
 // ---------------------------------------------------------------
