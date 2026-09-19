@@ -1,4 +1,16 @@
 <!DOCTYPE html>
+<!--
+  PANEL DE ADMINISTRACIÓN DE PEDIDOS — v1.0
+  CIAO Pizzería — Fecha: 30 de julio de 2026
+
+  Conectado a Supabase (tabla "pedidos"). Requiere supabase-config.js
+  cargado antes que admin.js, y que el usuario admin exista en
+  Authentication → Users del proyecto.
+
+  Incluye: login, métricas del día, filtros por estado, buscador,
+  detalle de pedido, avance rápido de estado, exportación a CSV,
+  pedido de prueba y actualización en tiempo real (Supabase Realtime).
+-->
 <html lang="es">
 <head>
 <meta charset="utf-8"/>
@@ -39,9 +51,13 @@
       <span class="sidebar-tag">Panel de pedidos</span>
     </div>
     <nav class="sidebar-nav">
-      <a class="sidebar-link active" href="#">
+      <a class="sidebar-link active" href="#" data-view="pedidos">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="9" rx="1"/><rect x="14" y="3" width="7" height="5" rx="1"/><rect x="14" y="12" width="7" height="9" rx="1"/><rect x="3" y="16" width="7" height="5" rx="1"/></svg>
         Pedidos
+      </a>
+      <a class="sidebar-link" href="#" data-view="inventario">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 7 12 3 4 7v10l8 4 8-4V7Z"/><path d="M12 12 20 7"/><path d="M12 12v9"/><path d="M12 12 4 7"/></svg>
+        Inventario
       </a>
     </nav>
     <div class="sidebar-footer">
@@ -50,6 +66,9 @@
   </aside>
 
   <main class="main-content">
+
+    <!-- ==================== VISTA: PEDIDOS ==================== -->
+    <div class="view" id="viewPedidos">
 
     <header class="topbar">
       <div class="topbar-title">
@@ -120,6 +139,64 @@
       <p class="orders-loading" id="ordersLoading">Cargando pedidos…</p>
     </section>
 
+    </div>
+
+    <!-- ==================== VISTA: INVENTARIO ==================== -->
+    <div class="view hidden" id="viewInventario">
+
+      <header class="topbar">
+        <div class="topbar-title">
+          <h1>Inventario</h1>
+        </div>
+        <div class="topbar-actions">
+          <button class="btn-outline" id="newIngredientBtn" type="button">+ Nuevo ingrediente</button>
+        </div>
+      </header>
+
+      <section class="kpi-grid kpi-grid-3">
+        <div class="kpi-card">
+          <span class="kpi-label">Ingredientes registrados</span>
+          <span class="kpi-value" id="kpiTotalIngredientes">0</span>
+        </div>
+        <div class="kpi-card kpi-pendiente">
+          <span class="kpi-label">Con stock bajo</span>
+          <span class="kpi-value" id="kpiStockBajo">0</span>
+        </div>
+        <div class="kpi-card kpi-camino">
+          <span class="kpi-label">Movimientos de hoy</span>
+          <span class="kpi-value" id="kpiMovimientosHoy">0</span>
+        </div>
+      </section>
+
+      <section class="filters-row">
+        <div class="search-box">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+          <input id="ingredientSearchInput" placeholder="Buscar ingrediente…" type="text"/>
+        </div>
+      </section>
+
+      <section class="orders-wrap">
+        <table class="orders-table">
+          <thead>
+            <tr>
+              <th>Ingrediente</th>
+              <th>Unidad</th>
+              <th>Stock actual</th>
+              <th>Stock mínimo</th>
+              <th>Estado</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody id="ingredientsBody">
+            <!-- filas generadas por JS -->
+          </tbody>
+        </table>
+        <p class="orders-empty hidden" id="ingredientsEmpty">No hay ingredientes que coincidan con la búsqueda.</p>
+        <p class="orders-loading" id="ingredientsLoading">Cargando inventario…</p>
+      </section>
+
+    </div>
+
   </main>
 </div>
 
@@ -133,6 +210,63 @@
     <div class="detail-body" id="detailBody">
       <!-- contenido generado por JS -->
     </div>
+  </div>
+</div>
+
+<!-- ==================== MODAL: NUEVO INGREDIENTE ==================== -->
+<div class="detail-overlay" id="ingredientOverlay">
+  <div class="detail-card">
+    <div class="detail-header">
+      <h2>Nuevo ingrediente</h2>
+      <button aria-label="Cerrar" class="detail-close" id="ingredientClose" type="button">✕</button>
+    </div>
+    <form class="detail-body" id="ingredientForm">
+      <div class="field">
+        <label for="ingName">Nombre</label>
+        <input id="ingName" placeholder="Ej: Queso mozzarella" required type="text"/>
+      </div>
+      <div class="field">
+        <label for="ingUnidad">Unidad</label>
+        <select id="ingUnidad">
+          <option value="kg">Kilogramos (kg)</option>
+          <option value="g">Gramos (g)</option>
+          <option value="l">Litros (l)</option>
+          <option value="ml">Mililitros (ml)</option>
+          <option value="unidad">Unidades</option>
+        </select>
+      </div>
+      <div class="field">
+        <label for="ingStockInicial">Stock inicial</label>
+        <input id="ingStockInicial" min="0" required step="any" type="number" value="0"/>
+      </div>
+      <div class="field">
+        <label for="ingStockMinimo">Stock mínimo (para alerta)</label>
+        <input id="ingStockMinimo" min="0" required step="any" type="number" value="0"/>
+      </div>
+      <button class="login-btn" type="submit">Guardar ingrediente</button>
+    </form>
+  </div>
+</div>
+
+<!-- ==================== MODAL: REGISTRAR MOVIMIENTO ==================== -->
+<div class="detail-overlay" id="movementOverlay">
+  <div class="detail-card">
+    <div class="detail-header">
+      <h2 id="movementTitle">Registrar movimiento</h2>
+      <button aria-label="Cerrar" class="detail-close" id="movementClose" type="button">✕</button>
+    </div>
+    <form class="detail-body" id="movementForm">
+      <p id="movementIngredientLabel" style="font-weight:600;"></p>
+      <div class="field">
+        <label for="movCantidad">Cantidad</label>
+        <input id="movCantidad" min="0" required step="any" type="number"/>
+      </div>
+      <div class="field">
+        <label for="movMotivo">Motivo (opcional)</label>
+        <input id="movMotivo" placeholder="Ej: Compra al mayorista, merma, etc." type="text"/>
+      </div>
+      <button class="login-btn" id="movementSubmitBtn" type="submit">Registrar</button>
+    </form>
   </div>
 </div>
 

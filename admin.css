@@ -116,6 +116,22 @@ input{font-family:inherit;}
 .kpi-camino{border-left-color:var(--azul);}
 .kpi-ventas{border-left-color:var(--verde);}
 .kpi-ventas .kpi-value{color:var(--verde);}
+.kpi-grid-3{grid-template-columns:repeat(3, 1fr);}
+
+/* ================= VISTAS (Pedidos / Inventario) ================= */
+.sidebar-link{transition:background .15s, color .15s;}
+
+/* ================= INVENTARIO ================= */
+.badge-stock-ok{background:#DCEBDD; color:var(--verde);}
+.badge-stock-bajo{background:#F5D9D9; color:var(--rojo-oscuro);}
+.ingredient-actions{display:flex; gap:6px; flex-wrap:wrap;}
+.mini-btn{
+  background:#fff; border:1.5px solid var(--borde); color:var(--carbon); padding:6px 10px;
+  font-size:0.76rem; font-weight:600; border-radius:2px; transition:background .15s;
+}
+.mini-btn:hover{background:var(--crema-2);}
+.mini-btn.entrada{border-color:var(--verde); color:var(--verde);}
+.mini-btn.salida{border-color:var(--rojo); color:var(--rojo-oscuro);}
 
 /* ================= FILTROS ================= */
 .filters-row{

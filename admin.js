@@ -46,6 +46,11 @@ function mostrarLogin() {
     supabaseClient.removeChannel(realtimeChannel);
     realtimeChannel = null;
   }
+  if (realtimeChannelInventario) {
+    supabaseClient.removeChannel(realtimeChannelInventario);
+    realtimeChannelInventario = null;
+  }
+  inventarioCargadoUnaVez = false;
 }
 
 function mostrarPanel() {
@@ -407,6 +412,242 @@ document.getElementById('exportCsvBtn').addEventListener('click', () => {
   a.click();
   document.body.removeChild(a);
   URL.revokeObjectURL(url);
+});
+
+// ---------------------------------------------------------------
+// NAVEGACIÓN ENTRE VISTAS (Pedidos / Inventario)
+// ---------------------------------------------------------------
+const viewPedidos = document.getElementById('viewPedidos');
+const viewInventario = document.getElementById('viewInventario');
+let inventarioCargadoUnaVez = false;
+
+document.querySelectorAll('.sidebar-link').forEach(link => {
+  link.addEventListener('click', (e) => {
+    e.preventDefault();
+    document.querySelectorAll('.sidebar-link').forEach(l => l.classList.remove('active'));
+    link.classList.add('active');
+
+    const vista = link.dataset.view;
+    if (vista === 'inventario') {
+      viewPedidos.classList.add('hidden');
+      viewInventario.classList.remove('hidden');
+      if (!inventarioCargadoUnaVez) {
+        inventarioCargadoUnaVez = true;
+        suscribirseATiempoRealInventario();
+      }
+      cargarIngredientes();
+    } else {
+      viewInventario.classList.add('hidden');
+      viewPedidos.classList.remove('hidden');
+    }
+  });
+});
+
+// ---------------------------------------------------------------
+// INVENTARIO: ESTADO EN MEMORIA
+// ---------------------------------------------------------------
+let ingredientesCache = [];
+let movimientosHoyCount = 0;
+let filtroTextoIngrediente = '';
+let ingredienteEnMovimiento = null; // { id, nombre, unidad, stock_actual } — para el modal de movimiento
+let realtimeChannelInventario = null;
+
+async function cargarIngredientes() {
+  const loadingEl = document.getElementById('ingredientsLoading');
+  loadingEl.classList.remove('hidden');
+
+  const { data, error } = await supabaseClient
+    .from('ingredientes')
+    .select('*')
+    .order('nombre', { ascending: true });
+
+  loadingEl.classList.add('hidden');
+
+  if (error) {
+    console.error('Error cargando ingredientes:', error.message);
+    return;
+  }
+  ingredientesCache = data || [];
+
+  const hoy = new Date();
+  const { count } = await supabaseClient
+    .from('movimientos_inventario')
+    .select('id', { count: 'exact', head: true })
+    .gte('creado_en', new Date(hoy.getFullYear(), hoy.getMonth(), hoy.getDate()).toISOString());
+  movimientosHoyCount = count || 0;
+
+  renderInventario();
+}
+
+function suscribirseATiempoRealInventario() {
+  if (realtimeChannelInventario) return;
+  realtimeChannelInventario = supabaseClient
+    .channel('inventario-realtime')
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'ingredientes' }, () => cargarIngredientes())
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'movimientos_inventario' }, () => cargarIngredientes())
+    .subscribe();
+}
+
+function ingredientesFiltrados() {
+  if (!filtroTextoIngrediente) return ingredientesCache;
+  return ingredientesCache.filter(i => i.nombre.toLowerCase().includes(filtroTextoIngrediente));
+}
+
+function renderInventarioKpis() {
+  const bajos = ingredientesCache.filter(i => Number(i.stock_actual) <= Number(i.stock_minimo)).length;
+  document.getElementById('kpiTotalIngredientes').textContent = ingredientesCache.length;
+  document.getElementById('kpiStockBajo').textContent = bajos;
+  document.getElementById('kpiMovimientosHoy').textContent = movimientosHoyCount;
+}
+
+function renderInventarioTabla() {
+  const tbody = document.getElementById('ingredientsBody');
+  const emptyEl = document.getElementById('ingredientsEmpty');
+  const lista = ingredientesFiltrados();
+
+  if (!lista.length) {
+    tbody.innerHTML = '';
+    emptyEl.classList.remove('hidden');
+    return;
+  }
+  emptyEl.classList.add('hidden');
+
+  tbody.innerHTML = lista.map(ing => {
+    const bajo = Number(ing.stock_actual) <= Number(ing.stock_minimo);
+    return `
+      <tr data-id="${ing.id}">
+        <td><strong>${escapeHTML(ing.nombre)}</strong></td>
+        <td>${escapeHTML(ing.unidad)}</td>
+        <td>${Number(ing.stock_actual)}</td>
+        <td>${Number(ing.stock_minimo)}</td>
+        <td><span class="badge ${bajo ? 'badge-stock-bajo' : 'badge-stock-ok'}">${bajo ? 'Stock bajo' : 'Bien'}</span></td>
+        <td>
+          <div class="ingredient-actions">
+            <button class="mini-btn entrada" data-id="${ing.id}" data-tipo="Entrada" type="button">+ Entrada</button>
+            <button class="mini-btn salida" data-id="${ing.id}" data-tipo="Salida" type="button">− Salida</button>
+          </div>
+        </td>
+      </tr>
+    `;
+  }).join('');
+}
+
+function renderInventario() {
+  renderInventarioKpis();
+  renderInventarioTabla();
+}
+
+document.getElementById('ingredientSearchInput').addEventListener('input', (e) => {
+  filtroTextoIngrediente = e.target.value.trim().toLowerCase();
+  renderInventarioTabla();
+});
+
+// ---------------------------------------------------------------
+// MODAL: NUEVO INGREDIENTE
+// ---------------------------------------------------------------
+const ingredientOverlay = document.getElementById('ingredientOverlay');
+document.getElementById('newIngredientBtn').addEventListener('click', () => {
+  document.getElementById('ingredientForm').reset();
+  ingredientOverlay.classList.add('open');
+});
+document.getElementById('ingredientClose').addEventListener('click', () => {
+  ingredientOverlay.classList.remove('open');
+});
+ingredientOverlay.addEventListener('click', (e) => {
+  if (e.target === ingredientOverlay) ingredientOverlay.classList.remove('open');
+});
+
+document.getElementById('ingredientForm').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const nombre = document.getElementById('ingName').value.trim();
+  const unidad = document.getElementById('ingUnidad').value;
+  const stockInicial = parseFloat(document.getElementById('ingStockInicial').value) || 0;
+  const stockMinimo = parseFloat(document.getElementById('ingStockMinimo').value) || 0;
+
+  const { error } = await supabaseClient.from('ingredientes').insert({
+    nombre, unidad, stock_actual: stockInicial, stock_minimo: stockMinimo,
+  });
+  if (error) {
+    alert('No se pudo guardar el ingrediente: ' + error.message);
+    return;
+  }
+  ingredientOverlay.classList.remove('open');
+  cargarIngredientes();
+});
+
+// ---------------------------------------------------------------
+// MODAL: REGISTRAR MOVIMIENTO (Entrada / Salida)
+// ---------------------------------------------------------------
+const movementOverlay = document.getElementById('movementOverlay');
+
+document.getElementById('ingredientsBody').addEventListener('click', (e) => {
+  const btn = e.target.closest('.mini-btn');
+  if (!btn) return;
+  const id = btn.dataset.id;
+  const tipo = btn.dataset.tipo;
+  const ingrediente = ingredientesCache.find(i => String(i.id) === String(id));
+  if (!ingrediente) return;
+
+  ingredienteEnMovimiento = { ...ingrediente, tipo };
+  document.getElementById('movementTitle').textContent =
+    tipo === 'Entrada' ? 'Registrar entrada' : 'Registrar salida';
+  document.getElementById('movementIngredientLabel').textContent =
+    `${ingrediente.nombre} — stock actual: ${Number(ingrediente.stock_actual)} ${ingrediente.unidad}`;
+  document.getElementById('movementSubmitBtn').textContent =
+    tipo === 'Entrada' ? 'Registrar entrada' : 'Registrar salida';
+  document.getElementById('movCantidad').value = '';
+  document.getElementById('movMotivo').value = '';
+  movementOverlay.classList.add('open');
+});
+
+document.getElementById('movementClose').addEventListener('click', () => {
+  movementOverlay.classList.remove('open');
+});
+movementOverlay.addEventListener('click', (e) => {
+  if (e.target === movementOverlay) movementOverlay.classList.remove('open');
+});
+
+document.getElementById('movementForm').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  if (!ingredienteEnMovimiento) return;
+
+  const cantidad = parseFloat(document.getElementById('movCantidad').value);
+  const motivo = document.getElementById('movMotivo').value.trim() || null;
+  const { id, tipo, stock_actual } = ingredienteEnMovimiento;
+
+  if (!cantidad || cantidad <= 0) {
+    alert('Ingresa una cantidad válida, mayor que cero.');
+    return;
+  }
+  if (tipo === 'Salida' && cantidad > Number(stock_actual)) {
+    if (!confirm('La cantidad de salida es mayor al stock actual. ¿Deseas continuar de todas formas?')) {
+      return;
+    }
+  }
+
+  const nuevoStock = tipo === 'Entrada'
+    ? Number(stock_actual) + cantidad
+    : Number(stock_actual) - cantidad;
+
+  const { error: errorMov } = await supabaseClient.from('movimientos_inventario').insert({
+    ingrediente_id: id, tipo, cantidad, motivo,
+  });
+  if (errorMov) {
+    alert('No se pudo registrar el movimiento: ' + errorMov.message);
+    return;
+  }
+
+  const { error: errorUpd } = await supabaseClient
+    .from('ingredientes')
+    .update({ stock_actual: nuevoStock })
+    .eq('id', id);
+  if (errorUpd) {
+    alert('El movimiento se registró, pero no se pudo actualizar el stock: ' + errorUpd.message);
+  }
+
+  movementOverlay.classList.remove('open');
+  ingredienteEnMovimiento = null;
+  cargarIngredientes();
 });
 
 // ---------------------------------------------------------------
